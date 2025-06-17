@@ -6,8 +6,14 @@ import {
   Dimensions,
   TouchableOpacity,
   ScrollView,
+  Platform,
+  TextInput,
+  Modal,
+  Alert,
 } from 'react-native';
-import { MapPin, Navigation, Zap, Clock, Route as RouteIcon } from 'lucide-react-native';
+import { MapPin, Navigation, Clock, Route as RouteIcon, Plus, X, Locate } from 'lucide-react-native';
+import LeafletMap from './LeafletMap';
+import * as Location from 'expo-location';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -21,12 +27,9 @@ interface MapRoute {
   distance: string;
 }
 
-interface TrafficPoint {
-  id: string;
-  x: number;
-  y: number;
-  severity: 'low' | 'moderate' | 'high';
-  type: 'accident' | 'construction' | 'congestion';
+interface Location {
+  name: string;
+  coordinates: { x: number; y: number };
 }
 
 interface InteractiveMapProps {
@@ -36,87 +39,145 @@ interface InteractiveMapProps {
   currentLocation?: string;
 }
 
+// Predefined locations for the demo
+const predefinedLocations: Location[] = [
+  { name: 'Downtown District', coordinates: { x: -1.9441, y: 30.0619 } },
+  { name: 'Kigali Heights', coordinates: { x: -1.9471, y: 30.0651 } },
+  { name: 'Kacyiru', coordinates: { x: -1.9445, y: 30.0622 } },
+  { name: 'Kimihurura', coordinates: { x: -1.9452, y: 30.0631 } },
+  { name: 'Remera', coordinates: { x: -1.9458, y: 30.0639 } },
+  { name: 'Nyamirambo', coordinates: { x: -1.9465, y: 30.0645 } },
+  { name: 'Kigali Convention Centre', coordinates: { x: -1.9550, y: 30.0940 } },
+  { name: 'Kigali International Airport', coordinates: { x: -1.9686, y: 30.1344 } },
+  { name: 'Nyabugogo Bus Station', coordinates: { x: -1.9367, y: 30.0522 } },
+  { name: 'Gikondo', coordinates: { x: -1.9667, y: 30.0833 } },
+  { name: 'Kicukiro', coordinates: { x: -1.9833, y: 30.0833 } },
+  { name: 'Gisozi', coordinates: { x: -1.9333, y: 30.0500 } },
+  { name: 'Kanombe', coordinates: { x: -1.9667, y: 30.1167 } },
+];
+
 export default function InteractiveMap({
   showRoutes = true,
   selectedRoute,
   onRouteSelect,
   currentLocation = 'Downtown District'
 }: InteractiveMapProps) {
-  const [routes] = useState<MapRoute[]>([
-    {
-      id: 'route-1',
-      name: 'Fastest Route',
-      coordinates: [
-        { x: 20, y: 80 },
-        { x: 35, y: 65 },
-        { x: 50, y: 50 },
-        { x: 65, y: 35 },
-        { x: 80, y: 20 },
-      ],
-      color: '#3B82F6',
-      trafficLevel: 'moderate',
-      estimatedTime: '22 min',
-      distance: '12.5 km',
-    },
-    {
-      id: 'route-2',
-      name: 'Scenic Route',
-      coordinates: [
-        { x: 20, y: 80 },
-        { x: 25, y: 70 },
-        { x: 40, y: 60 },
-        { x: 60, y: 45 },
-        { x: 75, y: 30 },
-        { x: 80, y: 20 },
-      ],
-      color: '#10B981',
-      trafficLevel: 'low',
-      estimatedTime: '28 min',
-      distance: '15.2 km',
-    },
-    {
-      id: 'route-3',
-      name: 'Economy Route',
-      coordinates: [
-        { x: 20, y: 80 },
-        { x: 30, y: 75 },
-        { x: 45, y: 70 },
-        { x: 55, y: 60 },
-        { x: 70, y: 40 },
-        { x: 80, y: 20 },
-      ],
-      color: '#F59E0B',
-      trafficLevel: 'high',
-      estimatedTime: '26 min',
-      distance: '11.8 km',
-    },
-  ]);
-
-  const [trafficPoints] = useState<TrafficPoint[]>([
-    { id: '1', x: 35, y: 65, severity: 'high', type: 'accident' },
-    { id: '2', x: 55, y: 45, severity: 'moderate', type: 'construction' },
-    { id: '3', x: 70, y: 30, severity: 'low', type: 'congestion' },
-    { id: '4', x: 40, y: 55, severity: 'moderate', type: 'congestion' },
-  ]);
-
-  const [animatedPoints, setAnimatedPoints] = useState<{ [key: string]: boolean }>({});
-
+  // State for takeoff and drop-off points
+  const [takeoffPoint, setTakeoffPoint] = useState<Location | null>(null);
+  const [dropoffPoint, setDropoffPoint] = useState<Location | null>(null);
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [selectingFor, setSelectingFor] = useState<'takeoff' | 'dropoff'>('takeoff');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [deviceLocation, setDeviceLocation] = useState<Location | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState<Location[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
+  // Generate routes when both points are selected
+  const [routes, setRoutes] = useState<MapRoute[]>([]);
+  
+  // Request location permission when component mounts
   useEffect(() => {
-    const interval = setInterval(() => {
-      setAnimatedPoints(prev => {
-        const newState = { ...prev };
-        trafficPoints.forEach(point => {
-          if (point.severity === 'high') {
-            newState[point.id] = !prev[point.id];
-          }
-        });
-        return newState;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [trafficPoints]);
-
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Location permission is required to use your current location');
+        return;
+      }
+      
+      // Get current location once permission is granted
+      getCurrentLocation();
+    })();
+  }, []);
+  
+  // Generate routes when both takeoff and dropoff points are set
+  useEffect(() => {
+    if (takeoffPoint && dropoffPoint) {
+      generateRoutes(takeoffPoint, dropoffPoint);
+    }
+  }, [takeoffPoint, dropoffPoint]);
+  
+  // Function to get current device location
+  const getCurrentLocation = async () => {
+    try {
+      setLocationLoading(true);
+      const location = await Location.getCurrentPositionAsync({});
+      const currentLoc: Location = {
+        name: 'Current Location',
+        coordinates: { 
+          x: location.coords.latitude, 
+          y: location.coords.longitude 
+        }
+      };
+      setDeviceLocation(currentLoc);
+      
+      // Automatically set as takeoff point if none is selected
+      if (!takeoffPoint) {
+        setTakeoffPoint(currentLoc);
+      }
+      
+      setLocationLoading(false);
+    } catch (error) {
+      setLocationLoading(false);
+      Alert.alert('Error', 'Could not get your current location');
+      console.error(error);
+    }
+  };
+  
+  // Function to generate routes between two points
+  const generateRoutes = (start: Location, end: Location) => {
+    // Create three different routes between the points
+    const newRoutes: MapRoute[] = [
+      {
+        id: 'route-1',
+        name: 'Fastest Route',
+        coordinates: [
+          start.coordinates,
+          { x: start.coordinates.x + 0.0004, y: start.coordinates.y + 0.0003 },
+          { x: start.coordinates.x + 0.0011, y: start.coordinates.y + 0.0012 },
+          { x: end.coordinates.x - 0.0007, y: end.coordinates.y - 0.0006 },
+          end.coordinates,
+        ],
+        color: '#3B82F6',
+        trafficLevel: 'moderate',
+        estimatedTime: '22 min',
+        distance: '12.5 km',
+      },
+      {
+        id: 'route-2',
+        name: 'Scenic Route',
+        coordinates: [
+          start.coordinates,
+          { x: start.coordinates.x + 0.0007, y: start.coordinates.y + 0.0006 },
+          { x: start.coordinates.x + 0.0014, y: start.coordinates.y + 0.0016 },
+          { x: end.coordinates.x - 0.0004, y: end.coordinates.y - 0.0003 },
+          end.coordinates,
+        ],
+        color: '#10B981',
+        trafficLevel: 'low',
+        estimatedTime: '28 min',
+        distance: '15.2 km',
+      },
+      {
+        id: 'route-3',
+        name: 'Economy Route',
+        coordinates: [
+          start.coordinates,
+          { x: start.coordinates.x + 0.0005, y: start.coordinates.y + 0.0009 },
+          { x: start.coordinates.x + 0.0012, y: start.coordinates.y + 0.0018 },
+          { x: end.coordinates.x - 0.0007, y: end.coordinates.y - 0.0004 },
+          end.coordinates,
+        ],
+        color: '#F59E0B',
+        trafficLevel: 'high',
+        estimatedTime: '26 min',
+        distance: '11.8 km',
+      },
+    ];
+    
+    setRoutes(newRoutes);
+  };
+  
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'high': return '#EF4444';
@@ -125,47 +186,75 @@ export default function InteractiveMap({
       default: return '#6B7280';
     }
   };
-
-  const renderRoute = (route: MapRoute) => {
-    const isSelected = selectedRoute === route.id;
-    const strokeWidth = isSelected ? 4 : 2;
-    const opacity = selectedRoute && !isSelected ? 0.3 : 1;
-
-    return (
-      <View key={route.id} style={StyleSheet.absoluteFill}>
-        {route.coordinates.map((point, index) => {
-          if (index === route.coordinates.length - 1) return null;
-          
-          const nextPoint = route.coordinates[index + 1];
-          const length = Math.sqrt(
-            Math.pow((nextPoint.x - point.x) * 2.5, 2) + 
-            Math.pow((nextPoint.y - point.y) * 2.5, 2)
-          );
-          const angle = Math.atan2(
-            (nextPoint.y - point.y) * 2.5,
-            (nextPoint.x - point.x) * 2.5
-          ) * (180 / Math.PI);
-
-          return (
-            <View
-              key={`${route.id}-${index}`}
-              style={[
-                styles.routeSegment,
-                {
-                  left: `${point.x}%`,
-                  top: `${point.y}%`,
-                  width: length,
-                  height: strokeWidth,
-                  backgroundColor: route.color,
-                  opacity,
-                  transform: [{ rotate: `${angle}deg` }],
-                },
-              ]}
-            />
-          );
-        })}
-      </View>
-    );
+  
+  // Search for locations using Nominatim API (OpenStreetMap)
+  const searchLocations = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    
+    try {
+      setIsSearching(true);
+      // Add "Kigali" to the search query to focus on Kigali area
+      const searchTerm = `${query}, Kigali, Rwanda`;
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=5`
+      );
+      
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
+      }
+      
+      const data = await response.json();
+      
+      // Transform the results to our Location format
+      const locations: Location[] = data.map((item: any) => ({
+        name: item.display_name.split(',')[0],
+        coordinates: { x: parseFloat(item.lat), y: parseFloat(item.lon) },
+        fullName: item.display_name
+      }));
+      
+      setSearchResults(locations);
+    } catch (error) {
+      console.error('Error searching for locations:', error);
+      Alert.alert('Error', 'Could not search for locations');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+  
+  // Debounce search to avoid too many API calls
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery.length > 2) {
+        searchLocations(searchQuery);
+      }
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+  
+  // Filter predefined locations based on search query
+  const filteredLocations = predefinedLocations.filter(location => 
+    location.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
+  // Handle location selection
+  const handleLocationSelect = (location: Location) => {
+    if (selectingFor === 'takeoff') {
+      setTakeoffPoint(location);
+    } else {
+      setDropoffPoint(location);
+    }
+    setLocationModalVisible(false);
+    setSearchQuery('');
+  };
+  
+  // Open location selection modal
+  const openLocationModal = (type: 'takeoff' | 'dropoff') => {
+    setSelectingFor(type);
+    setLocationModalVisible(true);
   };
 
   return (
@@ -182,85 +271,63 @@ export default function InteractiveMap({
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* Interactive Map Area */}
-      <View style={styles.mapContainer}>
-        <View style={styles.mapArea}>
-          {/* Grid Background */}
-          <View style={styles.gridBackground}>
-            {Array.from({ length: 10 }).map((_, i) => (
-              <View key={`h-${i}`} style={[styles.gridLine, styles.horizontalLine, { top: `${i * 10}%` }]} />
-            ))}
-            {Array.from({ length: 10 }).map((_, i) => (
-              <View key={`v-${i}`} style={[styles.gridLine, styles.verticalLine, { left: `${i * 10}%` }]} />
-            ))}
+      
+      {/* Route Selection Points */}
+      <View style={styles.routePointsContainer}>
+        <View style={styles.routePoint}>
+          <View style={styles.routePointIcon}>
+            <MapPin size={16} color="#3B82F6" />
           </View>
-
-          {/* Main Roads */}
-          <View style={[styles.mainRoad, styles.horizontalRoad, { top: '30%' }]} />
-          <View style={[styles.mainRoad, styles.horizontalRoad, { top: '70%' }]} />
-          <View style={[styles.mainRoad, styles.verticalRoad, { left: '40%' }]} />
-          <View style={[styles.mainRoad, styles.verticalRoad, { left: '60%' }]} />
-
-          {/* Routes */}
-          {showRoutes && routes.map(renderRoute)}
-
-          {/* Traffic Points */}
-          {trafficPoints.map((point) => (
-            <View
-              key={point.id}
-              style={[
-                styles.trafficPoint,
-                {
-                  left: `${point.x}%`,
-                  top: `${point.y}%`,
-                  backgroundColor: getSeverityColor(point.severity),
-                  transform: [
-                    { scale: animatedPoints[point.id] && point.severity === 'high' ? 1.3 : 1 }
-                  ],
-                },
-              ]}
-            >
-              <View style={[
-                styles.trafficPulse,
-                {
-                  backgroundColor: getSeverityColor(point.severity),
-                  opacity: animatedPoints[point.id] ? 0.3 : 0,
-                }
-              ]} />
-            </View>
-          ))}
-
-          {/* Start Location */}
-          <View style={[styles.locationMarker, styles.startLocation, { left: '20%', top: '80%' }]}>
-            <View style={styles.locationCenter} />
-            <View style={styles.locationPulse} />
-          </View>
-
-          {/* End Location */}
-          <View style={[styles.locationMarker, styles.endLocation, { left: '80%', top: '20%' }]}>
-            <View style={styles.locationCenter} />
-          </View>
-
-          {/* Distance Indicators */}
-          <View style={[styles.distanceIndicator, { left: '50%', top: '35%' }]}>
-            <Text style={styles.distanceText}>2.5 km</Text>
-          </View>
-        </View>
-
-        {/* Map Controls */}
-        <View style={styles.mapControls}>
-          <TouchableOpacity style={styles.controlButton}>
-            <Text style={styles.controlText}>+</Text>
+          <TouchableOpacity 
+            style={styles.routePointInput}
+            onPress={() => openLocationModal('takeoff')}
+          >
+            <Text style={takeoffPoint ? styles.routePointText : styles.routePointPlaceholder}>
+              {takeoffPoint ? takeoffPoint.name : 'Select takeoff point'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.controlButton}>
-            <Text style={styles.controlText}>-</Text>
+          <TouchableOpacity 
+            style={styles.locationButton}
+            onPress={getCurrentLocation}
+            disabled={locationLoading}
+          >
+            <Locate size={16} color={locationLoading ? "#9CA3AF" : "#3B82F6"} />
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.routePoint}>
+          <View style={styles.routePointIcon}>
+            <MapPin size={16} color="#EF4444" />
+          </View>
+          <TouchableOpacity 
+            style={styles.routePointInput}
+            onPress={() => openLocationModal('dropoff')}
+          >
+            <Text style={dropoffPoint ? styles.routePointText : styles.routePointPlaceholder}>
+              {dropoffPoint ? dropoffPoint.name : 'Select drop-off point'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* Interactive Map Area */}
+      <View style={styles.mapContainer}>
+        {/* Use Leaflet Map */}
+        <LeafletMap 
+          showRoutes={showRoutes && routes.length > 0}
+          trafficLevel={selectedRoute ? 
+            routes.find(r => r.id === selectedRoute)?.trafficLevel || 'moderate' : 
+            'moderate'
+          }
+          initialPosition={takeoffPoint ? [takeoffPoint.coordinates.x, takeoffPoint.coordinates.y] : [-1.944, 30.061]}
+          takeoffPoint={takeoffPoint?.coordinates}
+          dropoffPoint={dropoffPoint?.coordinates}
+          selectedRouteId={selectedRoute}
+        />
+      </View>
+      
       {/* Route Selection */}
-      {showRoutes && (
+      {showRoutes && routes.length > 0 && takeoffPoint && dropoffPoint ? (
         <ScrollView 
           horizontal 
           style={styles.routeSelector}
@@ -301,7 +368,17 @@ export default function InteractiveMap({
             </TouchableOpacity>
           ))}
         </ScrollView>
-      )}
+      ) : showRoutes && (!takeoffPoint || !dropoffPoint) ? (
+        <View style={styles.noRoutesContainer}>
+          <Text style={styles.noRoutesText}>
+            {!takeoffPoint && !dropoffPoint 
+              ? 'Select takeoff and drop-off points to see available routes'
+              : !takeoffPoint 
+                ? 'Select takeoff point to see available routes' 
+                : 'Select drop-off point to see available routes'}
+          </Text>
+        </View>
+      ) : null}
 
       {/* Map Legend */}
       <View style={styles.mapLegend}>
@@ -323,7 +400,7 @@ export default function InteractiveMap({
           </View>
         </View>
         
-        {showRoutes && (
+        {showRoutes && routes.length > 0 && (
           <View style={styles.legendSection}>
             <Text style={styles.legendTitle}>Routes</Text>
             <View style={styles.legendItems}>
@@ -337,6 +414,114 @@ export default function InteractiveMap({
           </View>
         )}
       </View>
+      
+      {/* Location Selection Modal */}
+      <Modal
+        visible={locationModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setLocationModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Select {selectingFor === 'takeoff' ? 'Takeoff' : 'Drop-off'} Point
+              </Text>
+              <TouchableOpacity 
+                style={styles.closeButton}
+                onPress={() => setLocationModalVisible(false)}
+              >
+                <X size={20} color="#374151" />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.searchInputContainer}>
+              <MapPin size={16} color="#9CA3AF" style={styles.searchInputIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search for a destination in Kigali..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity 
+                  style={styles.clearButton}
+                  onPress={() => setSearchQuery('')}
+                >
+                  <X size={16} color="#9CA3AF" />
+                </TouchableOpacity>
+              )}
+            </View>
+            
+            <ScrollView style={styles.locationsList}>
+              {selectingFor === 'takeoff' && (
+                <TouchableOpacity
+                  style={[styles.locationItem, styles.currentLocationItem]}
+                  onPress={() => deviceLocation ? handleLocationSelect(deviceLocation) : getCurrentLocation()}
+                  disabled={locationLoading && !deviceLocation}
+                >
+                  <Locate size={16} color="#3B82F6" />
+                  <Text style={styles.locationItemText}>
+                    {locationLoading && !deviceLocation ? 'Getting location...' : 'Use current location'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              
+              {isSearching && (
+                <View style={styles.searchingContainer}>
+                  <Text style={styles.searchingText}>Searching...</Text>
+                </View>
+              )}
+              
+              {searchQuery.length > 2 && searchResults.length > 0 && (
+                <View style={styles.searchResultsContainer}>
+                  <Text style={styles.searchResultsTitle}>Search Results</Text>
+                  {searchResults.map((location, index) => (
+                    <TouchableOpacity
+                      key={`search-${index}`}
+                      style={[styles.locationItem, styles.searchResultItem]}
+                      onPress={() => handleLocationSelect(location)}
+                    >
+                      <MapPin size={16} color="#3B82F6" />
+                      <View style={styles.searchResultTextContainer}>
+                        <Text style={styles.locationItemText}>{location.name}</Text>
+                        {location.name && (
+                          <Text style={styles.searchResultSubtext}>
+                            {location.name.split(',').slice(1, 3).join(',')}
+                          </Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              
+              {searchQuery.length > 0 && searchResults.length === 0 && !isSearching && (
+                <View style={styles.noResultsContainer}>
+                  <Text style={styles.noResultsText}>No results found. Try a different search.</Text>
+                </View>
+              )}
+              
+              <View style={styles.predefinedLocationsContainer}>
+                <Text style={styles.predefinedLocationsTitle}>Popular Locations</Text>
+                {filteredLocations.map((location) => (
+                  <TouchableOpacity
+                    key={location.name}
+                    style={styles.locationItem}
+                    onPress={() => handleLocationSelect(location)}
+                  >
+                    <MapPin size={16} color="#3B82F6" />
+                    <Text style={styles.locationItemText}>{location.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -379,6 +564,179 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: '#EFF6FF',
     borderRadius: 8,
+  },
+  routePointsContainer: {
+    padding: 16,
+    backgroundColor: '#F9FAFB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    gap: 12,
+  },
+  routePoint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  routePointIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  routePointInput: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  locationButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  routePointText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  routePointPlaceholder: {
+    fontSize: 14,
+    color: '#9CA3AF',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  searchInputIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 16,
+  },
+  clearButton: {
+    padding: 4,
+  },
+  locationsList: {
+    maxHeight: 300,
+  },
+  locationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  currentLocationItem: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  searchingContainer: {
+    padding: 12,
+    alignItems: 'center',
+  },
+  searchingText: {
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  searchResultsContainer: {
+    marginBottom: 16,
+  },
+  searchResultsTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  searchResultItem: {
+    backgroundColor: '#F3F4F6',
+  },
+  searchResultTextContainer: {
+    flex: 1,
+  },
+  searchResultSubtext: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  noResultsContainer: {
+    padding: 12,
+    alignItems: 'center',
+  },
+  noResultsText: {
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  predefinedLocationsContainer: {
+    marginTop: 8,
+  },
+  predefinedLocationsTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  locationItemText: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  noRoutesContainer: {
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noRoutesText: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
   },
   mapContainer: {
     position: 'relative',
@@ -444,94 +802,45 @@ const styles = StyleSheet.create({
   },
   locationMarker: {
     position: 'absolute',
-    width: 20,
-    height: 20,
-    marginLeft: -10,
-    marginTop: -10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  startLocation: {},
-  endLocation: {},
-  locationCenter: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#3B82F6',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  locationPulse: {
-    position: 'absolute',
     width: 24,
     height: 24,
     borderRadius: 12,
+    marginLeft: -12,
+    marginTop: -12,
     backgroundColor: '#3B82F6',
-    opacity: 0.3,
-  },
-  distanceIndicator: {
-    position: 'absolute',
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginLeft: -20,
-    marginTop: -10,
-  },
-  distanceText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Medium',
-    color: '#374151',
-  },
-  mapControls: {
-    position: 'absolute',
-    right: 16,
-    top: 16,
-    gap: 8,
-  },
-  controlButton: {
-    width: 36,
-    height: 36,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  controlText: {
-    fontSize: 18,
-    fontFamily: 'Inter-Bold',
-    color: '#374151',
   },
   routeSelector: {
-    maxHeight: 120,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
   routeSelectorContent: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
     gap: 12,
   },
   routeOption: {
-    width: 140,
+    width: screenWidth * 0.7,
+    maxWidth: 280,
     backgroundColor: '#F9FAFB',
     borderRadius: 12,
     padding: 12,
-    borderWidth: 2,
-    borderColor: 'transparent',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   routeOptionSelected: {
-    backgroundColor: '#EFF6FF',
     borderColor: '#3B82F6',
+    backgroundColor: '#EFF6FF',
   },
   routeOptionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     marginBottom: 8,
+    gap: 8,
   },
   routeColorIndicator: {
     width: 12,
@@ -539,13 +848,13 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   routeOptionName: {
-    fontSize: 12,
-    fontFamily: 'Inter-SemiBold',
+    fontSize: 16,
+    fontWeight: 'bold',
     color: '#111827',
-    flex: 1,
   },
   routeOptionMetrics: {
-    gap: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 8,
   },
   routeMetric: {
@@ -554,55 +863,50 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   routeMetricText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Medium',
-    color: '#6B7280',
+    fontSize: 14,
+    color: '#4B5563',
   },
   trafficLevelIndicator: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
     borderRadius: 4,
     alignSelf: 'flex-start',
   },
   trafficLevelText: {
-    fontSize: 8,
-    fontFamily: 'Inter-Bold',
+    fontSize: 10,
+    fontWeight: 'bold',
     color: '#FFFFFF',
   },
   mapLegend: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#F9FAFB',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
   },
   legendSection: {
-    flex: 1,
+    marginBottom: 12,
   },
   legendTitle: {
-    fontSize: 12,
-    fontFamily: 'Inter-SemiBold',
+    fontSize: 14,
+    fontWeight: 'bold',
     color: '#374151',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   legendItems: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 16,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
   },
   legendColor: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   legendText: {
-    fontSize: 10,
-    fontFamily: 'Inter-Medium',
+    fontSize: 12,
     color: '#6B7280',
   },
 });
