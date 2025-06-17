@@ -19,6 +19,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { MapPin, Clock, TrendingUp, Zap, Car, CircleAlert as AlertCircle } from 'lucide-react-native';
 import InteractiveMap from '@/components/InteractiveMap';
+import { useTrafficSocket } from '@/hooks/userTrafficSocket';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -38,6 +39,7 @@ interface SensorReading {
 }
 
 export default function Dashboard() {
+  const { trafficData: tdata, isConnected, connectionError } = useTrafficSocket();
   const [trafficData, setTrafficData] = useState<TrafficData>({
     currentSpeed: 45,
     averageSpeed: 38,
@@ -69,36 +71,45 @@ export default function Dashboard() {
     };
   });
 
-  // Simulate real-time sensor data updates
+  // Process real-time sensor data from socket
   useEffect(() => {
-    const interval = setInterval(() => {
-      const newReading: SensorReading = {
-        timestamp: new Date(),
-        vehicleCount: Math.floor(Math.random() * 100) + 20,
-        averageSpeed: Math.floor(Math.random() * 30) + 25,
-        densityLevel: Math.random(),
-      };
-
-      setSensorReadings(prev => [newReading, ...prev.slice(0, 9)]);
-
-      // Update traffic data based on sensor readings
-      const avgSpeed = newReading.averageSpeed;
-      const congestionLevel: 'low' | 'moderate' | 'high' = 
-        avgSpeed > 45 ? 'low' : avgSpeed > 30 ? 'moderate' : 'high';
-
-      setTrafficData(prev => ({
-        ...prev,
-        currentSpeed: avgSpeed + Math.floor(Math.random() * 10) - 5,
-        averageSpeed: avgSpeed,
-        congestionLevel,
-        estimatedDelay: congestionLevel === 'high' ? 
-          Math.floor(Math.random() * 20) + 15 : 
-          Math.floor(Math.random() * 10) + 5,
+    if (tdata.length > 0) {
+      console.log('Processing traffic data:', tdata);
+      
+      // Convert traffic data to sensor readings
+      const newReadings: SensorReading[] = tdata.map((data) => ({
+        timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+        vehicleCount: data.vehicleCount || 0,
+        averageSpeed: data.averageSpeedKph || 0,
+        densityLevel: data.congestionLevel === 'high' ? 0.8 : 
+                     data.congestionLevel === 'medium' ? 0.5 : 0.2,
       }));
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, []);
+      
+      // Update sensor readings
+      setSensorReadings(prev => {
+        const combined = [...newReadings, ...prev];
+        return combined.slice(0, 10); // Keep only the 10 most recent readings
+      });
+      
+      // Update traffic data based on the most recent reading
+      if (newReadings.length > 0) {
+        const latest = newReadings[0];
+        const congestionLevel: 'low' | 'moderate' | 'high' = 
+          latest.averageSpeed > 45 ? 'low' : 
+          latest.averageSpeed > 30 ? 'moderate' : 'high';
+          
+        setTrafficData({
+          currentSpeed: latest.averageSpeed,
+          averageSpeed: tdata.reduce((sum, data) => sum + (data.averageSpeedKph || 0), 0) / tdata.length,
+          congestionLevel,
+          estimatedDelay: congestionLevel === 'high' ? 
+            Math.floor(Math.random() * 20) + 15 : 
+            Math.floor(Math.random() * 10) + 5,
+          activeAlerts: Math.ceil(Math.random() * 5),
+        });
+      }
+    }
+  }, [tdata]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -142,10 +153,19 @@ export default function Dashboard() {
               <MapPin size={16} color="#6B7280" />
               <Text style={styles.location}>{currentLocation}</Text>
             </View>
+            {connectionError && (
+              <Text style={styles.connectionError}>
+                Connection error: {connectionError}
+              </Text>
+            )}
           </View>
-          <Animated.View style={[styles.liveIndicator, animatedPulseStyle]}>
-            <View style={styles.liveCircle} />
-            <Text style={styles.liveText}>LIVE</Text>
+          <Animated.View style={[
+            styles.liveIndicator, 
+            animatedPulseStyle, 
+            !isConnected && styles.disconnected
+          ]}>
+            <View style={[styles.liveCircle, !isConnected && styles.disconnectedCircle]} />
+            <Text style={styles.liveText}>{isConnected ? 'LIVE' : 'OFFLINE'}</Text>
           </Animated.View>
         </View>
 
@@ -188,7 +208,7 @@ export default function Dashboard() {
             <View style={styles.statIcon}>
               <TrendingUp size={20} color="#3B82F6" />
             </View>
-            <Text style={styles.statValue}>{trafficData.averageSpeed} km/h</Text>
+            <Text style={styles.statValue}>{parseFloat(`${trafficData.averageSpeed}`).toFixed(2)} km/h</Text>
             <Text style={styles.statLabel}>Avg Speed</Text>
           </View>
           
@@ -344,6 +364,11 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: '#6B7280',
   },
+  connectionError: {
+    fontSize: 12,
+    color: '#EF4444',
+    marginTop: 4,
+  },
   liveIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -353,11 +378,17 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     gap: 6,
   },
+  disconnected: {
+    backgroundColor: '#E5E7EB',
+  },
   liveCircle: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: '#EF4444',
+  },
+  disconnectedCircle: {
+    backgroundColor: '#9CA3AF',
   },
   liveText: {
     fontSize: 12,
