@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,10 @@ import {
   RefreshControl,
   Platform,
   Dimensions,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  interpolate,
-} from 'react-native-reanimated';
 import { MapPin, Clock, TrendingUp, Zap, Car, CircleAlert as AlertCircle } from 'lucide-react-native';
 import InteractiveMap from '@/components/InteractiveMap';
 import { useTrafficSocket } from '@/hooks/userTrafficSocket';
@@ -52,24 +46,21 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [currentLocation, setCurrentLocation] = useState('Downtown District');
 
-  const pulseAnimation = useSharedValue(0);
+  const pulseAnimation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    pulseAnimation.value = withRepeat(
-      withTiming(1, { duration: 2000 }),
-      -1,
-      true
-    );
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnimation, { toValue: 1, duration: 2000, useNativeDriver: true }),
+        Animated.timing(pulseAnimation, { toValue: 0, duration: 2000, useNativeDriver: true }),
+      ])
+    ).start();
   }, []);
 
-  const animatedPulseStyle = useAnimatedStyle(() => {
-    const scale = interpolate(pulseAnimation.value, [0, 1], [1, 1.1]);
-    const opacity = interpolate(pulseAnimation.value, [0, 1], [0.7, 1]);
-    return {
-      transform: [{ scale }],
-      opacity,
-    };
-  });
+  const animatedPulseStyle = {
+    transform: [{ scale: pulseAnimation.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] }) }],
+    opacity: pulseAnimation.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }),
+  };
 
   // Process real-time sensor data from socket
   useEffect(() => {

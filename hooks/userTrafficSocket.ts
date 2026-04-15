@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 
-const SOCKET_URL = 'http://192.168.1.74:5000'; // Use your machine's LAN IP address
+const SOCKET_URL = 'http://10.181.63.240:5000'; // Use your machine's LAN IP address
 
 export interface TrafficPayload {
   roadSegmentId: string;

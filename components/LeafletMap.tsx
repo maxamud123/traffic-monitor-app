@@ -309,7 +309,9 @@ export default function LeafletMap({
             .bindPopup('<b>Destination</b>');
         }
 
-        window.ReactNativeWebView.postMessage('mapLoaded');
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage('mapLoaded');
+        }
       </script>
     </body>
     </html>
