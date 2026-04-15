@@ -33,11 +33,11 @@ interface SensorReading {
 }
 
 export default function Dashboard() {
-  const { trafficData: tdata, isConnected, connectionError } = useTrafficSocket();
+  const { trafficData: tdata, isConnected, connectionError, isReconnecting } = useTrafficSocket();
   const [trafficData, setTrafficData] = useState<TrafficData>({
     currentSpeed: 45,
     averageSpeed: 38,
-    congestionLevel: 'moderate',
+    congestionLevel: 'medium',
     estimatedDelay: 12,
     activeAlerts: 3,
   });
@@ -85,9 +85,9 @@ export default function Dashboard() {
       // Update traffic data based on the most recent reading
       if (newReadings.length > 0) {
         const latest = newReadings[0];
-        const congestionLevel: 'low' | 'moderate' | 'high' = 
-          latest.averageSpeed > 45 ? 'low' : 
-          latest.averageSpeed > 30 ? 'moderate' : 'high';
+        const congestionLevel: 'low' | 'medium' | 'high' =
+          latest.averageSpeed > 45 ? 'low' :
+          latest.averageSpeed > 30 ? 'medium' : 'high';
           
         setTrafficData({
           currentSpeed: latest.averageSpeed,
@@ -112,7 +112,7 @@ export default function Dashboard() {
   const getTrafficColor = (level: string) => {
     switch (level) {
       case 'low': return '#10B981';
-      case 'moderate': return '#F59E0B';
+      case 'medium': return '#F59E0B';
       case 'high': return '#EF4444';
       default: return '#6B7280';
     }
@@ -121,7 +121,7 @@ export default function Dashboard() {
   const getTrafficGradient = (level: string) => {
     switch (level) {
       case 'low': return ['#10B981', '#059669'];
-      case 'moderate': return ['#F59E0B', '#D97706'];
+      case 'medium': return ['#F59E0B', '#D97706'];
       case 'high': return ['#EF4444', '#DC2626'];
       default: return ['#6B7280', '#4B5563'];
     }
@@ -144,10 +144,13 @@ export default function Dashboard() {
               <MapPin size={16} color="#6B7280" />
               <Text style={styles.location}>{currentLocation}</Text>
             </View>
-            {connectionError && (
+            {connectionError && !isReconnecting && (
               <Text style={styles.connectionError}>
-                Connection error: {connectionError}
+                Offline — {connectionError}
               </Text>
+            )}
+            {isReconnecting && (
+              <Text style={styles.reconnecting}>Reconnecting...</Text>
             )}
           </View>
           <Animated.View style={[
@@ -358,6 +361,11 @@ const styles = StyleSheet.create({
   connectionError: {
     fontSize: 12,
     color: '#EF4444',
+    marginTop: 4,
+  },
+  reconnecting: {
+    fontSize: 12,
+    color: '#F59E0B',
     marginTop: 4,
   },
   liveIndicator: {

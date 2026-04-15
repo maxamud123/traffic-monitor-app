@@ -1,32 +1,29 @@
 import { useEffect, useState } from 'react';
 import io from 'socket.io-client';
+import { TrafficPayload } from '@/types';
 
-const SOCKET_URL = 'http://10.181.63.240:5000'; // Use your machine's LAN IP address
-
-export interface TrafficPayload {
-  roadSegmentId: string;
-  timestamp: string;
-  vehicleCount: number;
-  averageSpeedKph: number;
-  congestionLevel: 'low' | 'medium' | 'high';
-}
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL || 'http://localhost:5000';
 
 export function useTrafficSocket() {
   const [trafficData, setTrafficData] = useState<TrafficPayload[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
     console.log('Attempting to connect to Socket.IO server at:', SOCKET_URL);
+
     const socket = io(SOCKET_URL, {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      timeout: 10000
+      reconnectionDelayMax: 10000,
+      timeout: 10000,
     });
 
     socket.on('connect', () => {
       console.log('📶 Connected to Socket.IO server with ID:', socket.id);
       setIsConnected(true);
+      setIsReconnecting(false);
       setConnectionError(null);
     });
 
@@ -36,15 +33,20 @@ export function useTrafficSocket() {
       setIsConnected(false);
     });
 
-    socket.on('traffic_update', (data: TrafficPayload) => {
+    socket.on('reconnect_attempt', () => {
+      setIsReconnecting(true);
+    });
+
+    socket.on('reconnect_failed', () => {
+      setIsReconnecting(false);
+      setConnectionError('Unable to connect to server. Check your network.');
+    });
+
+    socket.on('traffic_update', (data: TrafficPayload | TrafficPayload[]) => {
       console.log('📊 Received traffic update:', data);
-      setTrafficData(prev => {
-        // If we receive an array, replace the current data
-        if (Array.isArray(data)) {
-          return data;
-        }
-        // Otherwise add the new data point
-        return [...prev, data];
+      setTrafficData((prev) => {
+        if (Array.isArray(data)) return data;
+        return [data, ...prev].slice(0, 50); // keep last 50 readings
       });
     });
 
@@ -59,5 +61,5 @@ export function useTrafficSocket() {
     };
   }, []);
 
-  return { trafficData, isConnected, connectionError };
+  return { trafficData, isConnected, connectionError, isReconnecting };
 }

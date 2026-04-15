@@ -187,52 +187,55 @@ export default function InteractiveMap({
     }
   };
   
-  // Search for locations using Nominatim API (OpenStreetMap)
-  const searchLocations = async (query: string) => {
+  // Search for locations using Nominatim API with abort controller to cancel stale requests
+  const searchLocations = async (query: string, signal: AbortSignal) => {
     if (!query.trim()) {
       setSearchResults([]);
       return;
     }
-    
+
     try {
       setIsSearching(true);
-      // Add "Kigali" to the search query to focus on Kigali area
       const searchTerm = `${query}, Kigali, Rwanda`;
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=5`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchTerm)}&format=json&limit=5`,
+        { signal }
       );
-      
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-      
+
+      if (!response.ok) throw new Error('Network response was not ok');
+
       const data = await response.json();
-      
-      // Transform the results to our Location format
       const locations: Location[] = data.map((item: any) => ({
         name: item.display_name.split(',')[0],
         coordinates: { x: parseFloat(item.lat), y: parseFloat(item.lon) },
-        fullName: item.display_name
+        fullName: item.display_name,
       }));
-      
+
       setSearchResults(locations);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return; // ignore cancelled requests
       console.error('Error searching for locations:', error);
-      Alert.alert('Error', 'Could not search for locations');
     } finally {
       setIsSearching(false);
     }
   };
-  
-  // Debounce search to avoid too many API calls
+
+  // Debounce + cancel stale requests
   useEffect(() => {
+    if (searchQuery.length <= 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      if (searchQuery.length > 2) {
-        searchLocations(searchQuery);
-      }
+      searchLocations(searchQuery, controller.signal);
     }, 500);
-    
-    return () => clearTimeout(timer);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchQuery]);
   
   // Filter predefined locations based on search query
